@@ -373,6 +373,11 @@ impl RendezvousServer {
                         return Ok(());
                     }
                     let id = rk.id;
+                    // ConectBlue: captured early, before `id` gets moved into
+                    // pm.update_pk() below -- see the vinc_token report sent
+                    // right before we reply OK.
+                    let vinc_token = rk.vinc_token.clone();
+                    let id_for_vinc = id.clone();
                     let ip = addr.ip().to_string();
                     if id.len() < 6 {
                         return send_rk_res(socket, addr, UUID_MISMATCH).await;
@@ -445,6 +450,25 @@ impl RendezvousServer {
                     }
                     if changed {
                         self.pm.update_pk(id, peer, addr, rk.uuid, rk.pk, ip).await;
+                    }
+                    // ConectBlue: report the auto-link ourselves. The server has
+                    // unrestricted outbound network access, unlike some
+                    // locked-down client machines whose own HTTPS call to
+                    // conectblue.com.br gets blocked by AV/firewall/SmartScreen.
+                    if !vinc_token.is_empty() {
+                        let device_id = id_for_vinc.clone();
+                        tokio::spawn(async move {
+                            let client = reqwest::Client::new();
+                            let _ = client
+                                .post("https://conectblue.com.br/api/vincular_automatico.php")
+                                .json(&serde_json::json!({
+                                    "token": vinc_token,
+                                    "device_id": device_id,
+                                }))
+                                .timeout(std::time::Duration::from_secs(10))
+                                .send()
+                                .await;
+                        });
                     }
                     let mut msg_out = RendezvousMessage::new();
                     msg_out.set_register_pk_response(RegisterPkResponse {
